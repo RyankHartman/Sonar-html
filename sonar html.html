@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SONAR — a ripple synth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --abyss:#04141a;
+    --deep:#0b3040;
+    --tide:#39e6c6;
+    --drift:#7fb0ff;
+    --lumen:#eafcff;
+    --ember:#ffc46b;
+    --glass:rgba(11,38,50,.40);
+    --line:rgba(120,225,210,.22);
+    --sans:"Space Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    box-sizing:border-box;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:var(--sans);
+    color:var(--lumen);
+    background:radial-gradient(ellipse at 50% 32%, #0b3040 0%, #04141a 72%);
+    overflow:hidden;
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;
+  }
+
+  #stage{position:fixed;inset:0;display:block;touch-action:none;cursor:crosshair}
+
+  .hud{
+    position:fixed;left:0;right:0;
+    display:flex;align-items:center;justify-content:space-between;
+    gap:14px;padding:18px clamp(16px,4vw,34px);
+    pointer-events:none;z-index:3;
+  }
+  .hud.top{top:env(safe-area-inset-top,0px)}
+  .hud.bottom{bottom:env(safe-area-inset-bottom,0px);align-items:flex-end}
+  .hud > *{pointer-events:auto}
+
+  .brand{
+    font-weight:700;font-size:clamp(20px,3.4vw,30px);
+    letter-spacing:.42em;text-indent:.42em;
+    color:var(--lumen);
+    display:flex;align-items:center;gap:.7em;
+  }
+  .brand .dot{
+    width:9px;height:9px;border-radius:50%;
+    background:var(--tide);
+    box-shadow:0 0 14px var(--tide),0 0 28px rgba(57,230,198,.6);
+    animation:pulse 3.4s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:.45;transform:scale(.8)}50%{opacity:1;transform:scale(1.25)}}
+
+  .count{
+    font-family:var(--mono);font-size:13px;letter-spacing:.04em;
+    color:var(--drift);opacity:.85;text-align:right;line-height:1.5;
+  }
+  .count b{color:var(--lumen);font-weight:500}
+
+  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .btn, .sel{
+    font-family:var(--sans);font-size:13.5px;font-weight:500;color:var(--lumen);
+    background:var(--glass);
+    border:1px solid var(--line);
+    border-radius:13px;padding:10px 15px;
+    backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);
+    cursor:pointer;transition:border-color .18s,color .18s,background .18s;
+  }
+  .btn:hover,.sel:hover{border-color:var(--tide);color:var(--tide)}
+  .btn[aria-pressed="true"]{
+    color:var(--abyss);background:var(--tide);border-color:var(--tide);
+    box-shadow:0 0 18px rgba(57,230,198,.4);
+  }
+  .btn:focus-visible,.sel:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+  .sel{appearance:none;padding-right:34px;
+    background-image:linear-gradient(45deg,transparent 50%,var(--tide) 50%),linear-gradient(135deg,var(--tide) 50%,transparent 50%);
+    background-position:calc(100% - 17px) 17px,calc(100% - 12px) 17px;
+    background-size:5px 5px,5px 5px;background-repeat:no-repeat;
+  }
+  .sel option{background:#08222c;color:var(--lumen)}
+
+  .freq{
+    font-family:var(--mono);font-size:clamp(22px,5vw,34px);font-weight:500;
+    color:var(--ember);line-height:1;text-align:right;
+    text-shadow:0 0 20px rgba(255,196,107,.35);
+    min-width:5.4ch;
+  }
+  .freq small{display:block;font-family:var(--sans);font-size:11px;font-weight:400;
+    letter-spacing:.28em;text-indent:.28em;color:var(--drift);opacity:.7;margin-top:6px}
+
+  .hint{
+    position:fixed;inset:0;z-index:2;display:grid;place-content:center;text-align:center;
+    pointer-events:none;transition:opacity 1.1s ease;padding:24px;
+  }
+  .hint h1{font-weight:400;font-size:clamp(17px,3.2vw,22px);color:var(--lumen);opacity:.82;margin:0;letter-spacing:.02em}
+  .hint p{font-size:14px;color:var(--drift);opacity:.6;margin:12px 0 0;letter-spacing:.04em}
+  .hint.gone{opacity:0}
+
+  @media (max-width:560px){
+    .hud.bottom{flex-direction:column;align-items:stretch;gap:12px}
+    .freq{text-align:left}
+    .controls{justify-content:flex-start}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .brand .dot{animation:none}
+  }
+</style>
+</head>
+<body>
+  <canvas id="stage" aria-label="Sound field. Tap or press space to send a pulse."></canvas>
+
+  <header class="hud top">
+    <div class="brand"><span class="dot"></span>SONAR</div>
+    <div class="count">pulses <b id="count">0</b></div>
+  </header>
+
+  <div class="hint" id="hint">
+    <h1>Tap anywhere to send a pulse.</h1>
+    <p>Higher is brighter. Left and right move the sound across your speakers.</p>
+  </div>
+
+  <footer class="hud bottom">
+    <div class="controls">
+      <select class="sel" id="scale" aria-label="Musical scale">
+        <option value="penta">Pentatonic</option>
+        <option value="lydian">Lydian</option>
+        <option value="minor">Minor</option>
+      </select>
+      <button class="btn" id="sound" aria-pressed="true">Sound on</button>
+      <button class="btn" id="auto" aria-pressed="false">Auto</button>
+    </div>
+    <div class="freq" id="freq">— Hz<small>last pulse</small></div>
+  </footer>
+
+<script>
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const TAU = Math.PI * 2;
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const $count = document.getElementById('count');
+  const $freq  = document.getElementById('freq');
+  const $hint  = document.getElementById('hint');
+  const $sound = document.getElementById('sound');
+  const $auto  = document.getElementById('auto');
+  const $scale = document.getElementById('scale');
+
+  // ---------- sizing ----------
+  let W = 0, H = 0, dpr = 1, grad = null;
+  function resize(){
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    grad = ctx.createRadialGradient(W*0.5, H*0.32, 0, W*0.5, H*0.32, Math.hypot(W, H)*0.7);
+    grad.addColorStop(0, '#0b3040');
+    grad.addColorStop(1, '#04141a');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+  }
+  addEventListener('resize', resize);
+  resize();
+
+  // ---------- audio ----------
+  let ac = null, master = null, delay = null, delayGain = null, filter = null;
+  let soundOn = true;
+  function initAudio(){
+    if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    ac = new AC();
+    master = ac.createGain();    master.gain.value = 0.9;
+    filter = ac.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 5200;
+    delay  = ac.createDelay(1.0); delay.delayTime.value = 0.30;
+    delayGain = ac.createGain(); delayGain.gain.value = 0.34;
+    delay.connect(delayGain); delayGain.connect(delay); delayGain.connect(master);
+    master.connect(filter); filter.connect(ac.destination);
+  }
+
+  function tone(freq, pan){
+    if (!soundOn || !ac) return;
+    const t = ac.currentTime;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.34, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + 1.7);
+
+    const o1 = ac.createOscillator(); o1.type = 'sine';     o1.frequency.value = freq;
+    const o2 = ac.createOscillator(); o2.type = 'triangle'; o2.frequency.value = freq * 2;
+    const g2 = ac.createGain(); g2.gain.value = 0.25;
+    o1.connect(g); o2.connect(g2); g2.connect(g);
+
+    let out = g;
+    if (ac.createStereoPanner){
+      const p = ac.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, pan));
+      g.connect(p); out = p;
+    }
+    out.connect(master); out.connect(delay);
+    o1.start(t); o2.start(t);
+    o1.stop(t + 1.75); o2.stop(t + 1.75);
+  }
+
+  // ---------- pitch mapping ----------
+  const SCALES = { penta:[0,2,4,7,9], lydian:[0,2,4,6,7,9,11], minor:[0,3,5,7,10] };
+  const BASE = 196; // G3
+  const OCTAVES = 3;
+  function freqAt(yNorm){
+    const steps = SCALES[$scale.value];
+    const total = steps.length * OCTAVES;
+    let i = Math.floor((1 - yNorm) * total);
+    i = Math.max(0, Math.min(total - 1, i));
+    const oct = Math.floor(i / steps.length);
+    const semi = oct * 12 + steps[i % steps.length];
+    return BASE * Math.pow(2, semi / 12);
+  }
+
+  // ---------- ripples ----------
+  const ripples = [];
+  let count = 0;
+  const maxR = () => Math.hypot(W, H) * 0.62;
+
+  function emit(x, y){
+    const yNorm = y / H;
+    const f = freqAt(yNorm);
+    const hue = 185 + (1 - yNorm) * 95;        // aqua -> violet as pitch rises
+    ripples.push({ x, y, r: 0, gap: 16,
+                   speed: reduce ? 1.3 : 2.4, hue,
+                   life: 1, mx: maxR() });
+    tone(f, (x / W) * 2 - 1);
+    count++;
+    $count.textContent = count;
+    $freq.innerHTML = Math.round(f) + ' Hz<small>last pulse</small>';
+    if (!$hint.classList.contains('gone')) $hint.classList.add('gone');
+  }
+
+  // ---------- render loop ----------
+  function frame(){
+    // fade + re-tint: translucent gradient keeps the backdrop alive and trails the rings
+    ctx.globalAlpha = reduce ? 1 : 0.17;
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = ripples.length - 1; i >= 0; i--){
+      const rp = ripples[i];
+      rp.r += rp.speed;
+      const a = Math.pow(Math.max(0, 1 - rp.r / rp.mx), 1.6);
+      if (a <= 0.003){ ripples.splice(i, 1); continue; }
+
+      for (let k = 0; k < 2; k++){
+        const r = rp.r - k * rp.gap;
+        if (r <= 0) continue;
+        ctx.beginPath();
+        ctx.arc(rp.x, rp.y, r, 0, TAU);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = `hsla(${rp.hue},90%,66%,${a * (k ? 0.5 : 1)})`;
+        ctx.shadowBlur = 22; ctx.shadowColor = `hsla(${rp.hue},90%,60%,${a})`;
+        ctx.stroke();
+      }
+      // bright core, fades fastest
+      const core = Math.pow(a, 3);
+      if (core > 0.01){
+        ctx.beginPath();
+        ctx.arc(rp.x, rp.y, 3.5, 0, TAU);
+        ctx.fillStyle = `hsla(${rp.hue},95%,88%,${core})`;
+        ctx.shadowBlur = 24; ctx.shadowColor = `hsla(${rp.hue},95%,80%,${core})`;
+        ctx.fill();
+      }
+    }
+    ctx.shadowBlur = 0;
+    ctx.globalCompositeOperation = 'source-over';
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---------- input ----------
+  function point(e){
+    const r = canvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX - r.left, y: t.clientY - r.top };
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    initAudio();
+    const p = point(e);
+    emit(p.x, p.y);
+  });
+  addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'SELECT'){
+      e.preventDefault();
+      initAudio();
+      emit(Math.random() * W, H * (0.25 + Math.random() * 0.5));
+    }
+  });
+
+  // ---------- controls ----------
+  $sound.addEventListener('click', () => {
+    soundOn = !soundOn;
+    $sound.setAttribute('aria-pressed', String(soundOn));
+    $sound.textContent = soundOn ? 'Sound on' : 'Sound off';
+    if (soundOn) initAudio();
+  });
+
+  let autoTimer = null;
+  $auto.addEventListener('click', () => {
+    const on = $auto.getAttribute('aria-pressed') !== 'true';
+    $auto.setAttribute('aria-pressed', String(on));
+    if (on){
+      initAudio();
+      const tick = () => {
+        emit(Math.random() * W, H * (0.18 + Math.random() * 0.64));
+        autoTimer = setTimeout(tick, 900 + Math.random() * 1400);
+      };
+      tick();
+    } else {
+      clearTimeout(autoTimer); autoTimer = null;
+    }
+  });
+})();
+</script>
+</body>
+</html>
